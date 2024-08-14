@@ -1,12 +1,12 @@
 package io.github.imort.database.command
 
+import io.github.imort.database.command.Command.Begin
+import io.github.imort.database.command.Command.GeneralCommand.Commit
 import io.github.imort.database.command.Command.GeneralCommand.Count
 import io.github.imort.database.command.Command.GeneralCommand.Delete
 import io.github.imort.database.command.Command.GeneralCommand.Get
+import io.github.imort.database.command.Command.GeneralCommand.Rollback
 import io.github.imort.database.command.Command.GeneralCommand.Set
-import io.github.imort.database.command.Command.TransactionCommand.Begin
-import io.github.imort.database.command.Command.TransactionCommand.Commit
-import io.github.imort.database.command.Command.TransactionCommand.Rollback
 
 object CommandParser {
     private val commandFactories = mapOf<String, (List<String>) -> Command>(
