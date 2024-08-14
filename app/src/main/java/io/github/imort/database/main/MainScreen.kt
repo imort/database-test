@@ -34,10 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
 @Composable
-fun MainScreen(
-    modifier: Modifier = Modifier,
-    vm: MainViewModel = hiltViewModel(),
-) {
+fun MainScreen(modifier: Modifier = Modifier, vm: MainViewModel = hiltViewModel()) {
     val state by vm.states.collectAsStateWithLifecycle()
     MainScreenImpl(
         modifier = modifier,

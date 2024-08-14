@@ -9,16 +9,18 @@ import io.github.imort.database.command.Command.GeneralCommand.Rollback
 import io.github.imort.database.command.Command.GeneralCommand.Set
 import io.github.imort.database.store.Snapshot
 import kotlinx.coroutines.channels.Channel
+import java.util.UUID
 
 class Transaction(
     val logger: Channel<String>,
     val snapshot: Snapshot,
-    var successful: Boolean = false,
 ) {
+    val id = UUID.randomUUID().toString()
+    var successful: Boolean = false
     val scope = TransactionScope()
 
     inner class TransactionScope {
-        suspend fun perform(command: Command.GeneralCommand): String = when (command) {
+        fun perform(command: Command.GeneralCommand): String = when (command) {
             is Get -> get(command.key)
             is Count -> count(command.value)
             is Set -> set(command.key, command.value)
@@ -27,24 +29,24 @@ class Transaction(
             is Rollback -> rollback()
         }
 
-        suspend fun get(key: String): String {
+        fun get(key: String): String {
             val value = snapshot.get(key)
-            logger.send(value ?: "Key $key not set")
+            logger.trySend(value ?: "Key $key not set")
             return value ?: "Key $key not set"
         }
 
-        suspend fun count(value: String): String {
+        fun count(value: String): String {
             val count = snapshot.count(value).toString()
-            logger.send(count)
+            logger.trySend(count)
             return count
         }
 
-        suspend fun set(key: String, value: String): String {
+        fun set(key: String, value: String): String {
             snapshot.set(key, value)
             return ""
         }
 
-        suspend fun delete(key: String): String {
+        fun delete(key: String): String {
             snapshot.set(key, null)
             return ""
         }

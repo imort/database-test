@@ -6,8 +6,8 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.hilt.migration.DisableInstallInCheck
-import io.github.imort.database.store.StoreImpl
 import io.github.imort.database.store.Store
+import io.github.imort.database.store.StoreImpl
 
 @Module(includes = [DatabaseModule.Bindings::class])
 @InstallIn(SingletonComponent::class)
