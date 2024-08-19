@@ -31,8 +31,9 @@ class Transaction(
 
         fun get(key: String): String {
             val value = snapshot.get(key)
-            logger.trySend(value ?: "Key $key not set")
-            return value ?: "Key $key not set"
+            val message = value ?: "Key $key not set"
+            logger.trySend(message)
+            return message
         }
 
         fun count(value: String): String {

@@ -11,21 +11,17 @@ import io.github.imort.database.command.Command.GeneralCommand.Get
 import io.github.imort.database.command.Command.GeneralCommand.Rollback
 import io.github.imort.database.command.Command.GeneralCommand.Set
 import io.github.imort.database.store.StoreImpl
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.ClassRule
 import org.junit.Rule
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class DatabaseTest {
 
     companion object {
@@ -42,13 +38,13 @@ class DatabaseTest {
         store = StoreImpl(),
     )
 
-    private fun TestScope.collectLogs(database: Database): MutableList<String> {
-        val logs = mutableListOf<String>()
-        backgroundScope.launch(UnconfinedTestDispatcher()) {
-            database.logsFlow.toList(logs)
-        }
-        return logs
-    }
+//    private fun TestScope.collectLogs(database: Database): MutableList<String> {
+//        val logs = mutableListOf<String>()
+//        backgroundScope.launch(UnconfinedTestDispatcher()) {
+//            database.logsFlow.toList(logs)
+//        }
+//        return logs
+//    }
 
     @Test
     fun setAndGetValue() = runTest {
@@ -148,7 +144,7 @@ class DatabaseTest {
     }
 
     @Test
-    fun nestedTransactions() = runTest {
+    fun nestedTransactions1() = runTest {
         with(db) {
             execute(Set("foo", "123"))
             execute(Set("bar", "456"))
@@ -165,6 +161,166 @@ class DatabaseTest {
             execute(Get("foo")) shouldBe "Key foo not set"
             execute(Rollback) shouldBe ""
             execute(Get("foo")) shouldBe "123"
+        }
+    }
+
+    @Test
+    fun nestedTransactions2() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+            withTransaction {
+                set("foo", "456")
+                withTransaction {
+                    count("456") shouldBe "2"
+                    get("foo") shouldBe "456"
+                    set("foo", "789")
+                    get("foo") shouldBe "789"
+                    commit()
+                }
+                get("foo") shouldBe "789"
+                delete("foo")
+                get("foo") shouldBe "Key foo not set"
+                rollback()
+            }
+            execute(Get("foo")) shouldBe "123"
+        }
+    }
+
+    @Test
+    fun mixedNestedTransactions1() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+            execute(Begin) shouldBe ""
+            execute(Set("foo", "456"))
+            withTransaction {
+                count("456") shouldBe "2"
+                get("foo") shouldBe "456"
+                set("foo", "789")
+                get("foo") shouldBe "789"
+                rollback()
+            }
+            execute(Get("foo")) shouldBe "456"
+            execute(Delete("foo"))
+            execute(Get("foo")) shouldBe "Key foo not set"
+            execute(Rollback) shouldBe ""
+            execute(Get("foo")) shouldBe "123"
+        }
+    }
+
+    @Test
+    fun mixedNestedTransactions2() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+            withTransaction {
+                set("foo", "456")
+
+                execute(Begin) shouldBe ""
+                execute(Count("456")) shouldBe "2"
+                execute(Get("foo")) shouldBe "456"
+                execute(Set("foo", "789"))
+                execute(Get("foo")) shouldBe "789"
+                execute(Commit) shouldBe ""
+
+                get("foo") shouldBe "789"
+                delete("foo")
+                get("foo") shouldBe "Key foo not set"
+                rollback()
+            }
+        }
+    }
+
+    @Test
+    fun mixedNestedTransactionsError() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+
+            withTransaction {
+                set("foo", "456")
+                set("bar", "789")
+
+                shouldThrow<IllegalStateException> {
+                    execute(Commit)
+                }
+                shouldThrow<IllegalStateException> {
+                    execute(Rollback)
+                }
+
+                get("foo") shouldBe "456"
+                delete("foo")
+                get("foo") shouldBe "Key foo not set"
+                commit()
+            }
+
+            execute(Get("foo")) shouldBe "Key foo not set"
+            execute(Get("bar")) shouldBe "789"
+        }
+    }
+
+    @Test
+    fun deepNestedTransaction1() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+
+            execute(Begin) shouldBe ""
+            execute(Set("foo", "456"))
+
+            execute(Begin) shouldBe ""
+            execute(Count("456")) shouldBe "2"
+            execute(Get("foo")) shouldBe "456"
+            execute(Set("foo", "789"))
+            execute(Get("foo")) shouldBe "789"
+
+            execute(Begin) shouldBe ""
+            execute(Set("bar", "789"))
+            execute(Count("789")) shouldBe "2"
+            execute(Commit) shouldBe ""
+
+            execute(Get("bar")) shouldBe "789"
+            execute(Rollback) shouldBe ""
+
+            execute(Get("foo")) shouldBe "456"
+            execute(Delete("foo"))
+            execute(Get("foo")) shouldBe "Key foo not set"
+            execute(Rollback) shouldBe ""
+
+            execute(Get("foo")) shouldBe "123"
+            execute(Get("bar")) shouldBe "456"
+        }
+    }
+
+    @Test
+    fun deepNestedTransaction2() = runTest {
+        with(db) {
+            execute(Set("foo", "123"))
+            execute(Set("bar", "456"))
+
+            withTransaction {
+                set("foo", "456")
+                withTransaction {
+                    count("456") shouldBe "2"
+                    get("foo") shouldBe "456"
+                    set("foo", "789")
+                    get("foo") shouldBe "789"
+                    withTransaction {
+                        set("bar", "789")
+                        count("789") shouldBe "2"
+                        commit()
+                    }
+                    rollback()
+                }
+                get("foo") shouldBe "456"
+                delete("foo")
+                get("foo") shouldBe "Key foo not set"
+                rollback()
+            }
+
+            execute(Get("foo")) shouldBe "123"
+            execute(Get("bar")) shouldBe "456"
         }
     }
 

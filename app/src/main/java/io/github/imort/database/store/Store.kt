@@ -15,7 +15,7 @@ interface Store {
 
     fun merge(changes: Map<String, Snapshot.Change>) {
         changes.keys.forEach { key ->
-            val targetVersion = changes[key]!!.version
+            val targetVersion = changes[key]?.version ?: error("Missing changes for $key")
             val sourceVersion = version(key) ?: return@forEach
             check(targetVersion == sourceVersion) { "Conflict on $key" }
         }

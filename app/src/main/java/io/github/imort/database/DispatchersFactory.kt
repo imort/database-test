@@ -5,12 +5,11 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.newSingleThreadContext
-import kotlin.coroutines.CoroutineContext
 
 interface DispatchersFactory {
-    val database: CoroutineContext
-    val default: CoroutineContext
-    val io: CoroutineContext
+    val database: CoroutineDispatcher
+    val default: CoroutineDispatcher
+    val io: CoroutineDispatcher
 
     companion object DefaultDispatchersFactory : DispatchersFactory {
         @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)

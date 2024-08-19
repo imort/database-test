@@ -35,7 +35,7 @@ class MainViewModel @Inject constructor(
             CommandParser.parse(input)
         } catch (t: Throwable) {
             val error = t.message ?: "Unknown error"
-            update { copy(logs = logs + error) }
+            update { copy(inputError = true, logs = logs + error) }
             return
         }
         update { copy(input = "", logs = logs + "> $input") }

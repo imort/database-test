@@ -2,6 +2,8 @@ package io.github.imort.database.core
 
 import io.github.imort.database.DispatchersFactory
 import io.github.imort.database.command.Command
+import io.github.imort.database.command.Command.Begin
+import io.github.imort.database.command.Command.GeneralCommand
 import io.github.imort.database.command.Command.GeneralCommand.Commit
 import io.github.imort.database.command.Command.GeneralCommand.Rollback
 import io.github.imort.database.core.Transaction.TransactionScope
@@ -12,16 +14,17 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.LinkedList
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 
 /**
- * Implements ACID database with Snapshot isolation level
+ * Implements database with Snapshot/Read Uncommited isolation level
  * This allows transactions to run in parallel on non intersecting sets of keys
  * Reads and writes are concurrent, commits and rollbacks are synchronized
  * Conflicts are resolving by comparing versions of the data, in such case last transaction rollbacks
- * Nested transactions are supported for interpreters on the single thread
+ * Nested transactions are supported
  */
 @Singleton
 class Database @Inject constructor(
@@ -40,101 +43,93 @@ class Database @Inject constructor(
     private val transactionContext = dispatchersFactory.database + CoroutineName("db-transaction")
     private val parallelContext = dispatchersFactory.default + CoroutineName("db-parallel")
 
-    private val transactionStackLocalInitialized = AtomicBoolean(false)
-    private val transactionStackLocal = ThreadLocal.withInitial {
-        if (transactionStackLocalInitialized.getAndSet(true)) error("Interpreter allowed only on single thread")
-        LinkedList<Transaction>()
+    private val transactionStack = LinkedList<Transaction>()
+
+    private val CoroutineContext.transactionElement: TransactionElement?
+        get() = this[TransactionElement]
+
+    private fun CoroutineContext.transactional(): CoroutineContext = this + when (transactionElement) {
+        null -> transactionContext + TransactionElement(transactionStack.peek())
+        else -> transactionContext
     }
-    private val transactionStack
-        get() = transactionStackLocal.get() ?: error("Should fail in initializer")
-    private val currentTransaction: Transaction?
-        get() = transactionStack.peek()
+
+    private suspend fun <R> withTransactionContext(block: suspend (Store) -> R) =
+        withContext(coroutineContext.transactional()) {
+            val source = coroutineContext.transactionElement?.transaction?.snapshot ?: store
+            block(source)
+        }
+
+    private suspend fun currentTransaction() =
+        coroutineContext.transactionElement?.transaction ?: transactionStack.peek()
 
     /**
-     * For general clients, multithreading support
+     * For general clients
      * There is rabbit hole here, will keep things simple using snapshots of the store
      * @see <a href="https://medium.com/androiddevelopers/threading-models-in-coroutines-and-android-sqlite-api-6cab11f7eb90">Room developers article</a>
      */
-    suspend fun withTransaction(block: suspend TransactionScope.() -> Unit): Unit = withContext(transactionContext) {
-        executeInNewTransaction(interpreter = false, block)
+    suspend fun withTransaction(block: suspend TransactionScope.() -> Unit): Unit = withTransactionContext { source ->
+        executeInNewTransaction(source, block)
     }
 
     /**
-     * For interpreter clients, nested transactions support
+     * For interpreter clients
      */
-    suspend fun execute(command: Command): String {
-        return withContext(transactionContext) {
-            when (command) {
-                is Command.Begin -> {
-                    beginTransaction(interpreter = true)
-                    ""
-                }
-
-                is Command.GeneralCommand -> {
-                    val transaction = currentTransaction
-                    if (transaction == null) {
-                        when (command) {
-                            Commit, Rollback -> "No transaction".also { logsChannel.trySend(it) }
-                            else -> executeInNewTransaction(interpreter = true) {
-                                val r = perform(command)
-                                commit()
-                                return@executeInNewTransaction r
-                            }
-                        }
-                    } else {
-                        val r = try {
-                            transaction.scope.perform(command)
-                        } catch (t: Throwable) {
-                            t.message ?: "Unknown error"
-                        }
-                        when (command) {
-                            Commit, Rollback -> endTransaction(transaction, interpreter = true)
-                            else -> Unit
-                        }
-                        r
-                    }
-                }
-            }
-        }
-    }
-
-    private fun beginTransaction(interpreter: Boolean): Transaction {
-        val snapshot = if (interpreter) {
-            when (val current = currentTransaction) {
-                null -> store.snapshot()
-                else -> current.snapshot.snapshot()
-            }
-        } else {
-            store.snapshot()
-        }
-        return Transaction(logsChannel, snapshot).also { transaction ->
-            if (interpreter) {
+    suspend fun execute(command: Command): String = withTransactionContext { source ->
+        when (command) {
+            Begin -> {
+                val transaction = beginTransaction(source)
                 transactionStack.push(transaction)
-                Timber.i(
-                    "beginTransaction ${transaction.id} stack ${transactionStack.size} on ${Thread.currentThread()}",
-                )
-            } else {
-                Timber.i("beginTransaction ${transaction.id} on ${Thread.currentThread()}")
+                ""
+            }
+
+            is GeneralCommand -> {
+                val transaction = currentTransaction()
+                if (transaction == null) {
+                    when (command) {
+                        Commit, Rollback -> "No transaction".also { logsChannel.trySend(it) }
+                        else -> executeInNewTransaction(source) {
+                            val r = perform(command)
+                            commit()
+                            return@executeInNewTransaction r
+                        }
+                    }
+                } else {
+                    val result = transaction.scope.perform(command)
+                    if (command is Commit || command is Rollback) {
+                        if (transaction == transactionStack.peek()) {
+                            endTransaction(transaction)
+                            transactionStack.pop()
+                        } else {
+                            error("Ending transaction started by withTransaction")
+                        }
+                    }
+                    result
+                }
             }
         }
     }
 
-    private fun endTransaction(transaction: Transaction, interpreter: Boolean) {
-        if (interpreter) {
-            check(transaction === transactionStack.pop()) { "Ending transaction not on top of the stack" }
-        }
-        if (transaction.successful) transaction.snapshot.commit()
-        Timber.i("endTransaction ${transaction.id} stack ${transactionStack.size} on ${Thread.currentThread()}")
-    }
-
-    private suspend fun <R> executeInNewTransaction(interpreter: Boolean, block: suspend TransactionScope.() -> R): R {
-        val transaction = beginTransaction(interpreter)
+    private suspend fun <R> executeInNewTransaction(source: Store, block: suspend TransactionScope.() -> R): R {
+        val transaction = beginTransaction(source)
         try {
             return withContext(parallelContext) {
                 block.invoke(transaction.scope)
             }
         } finally {
-            endTransaction(transaction, interpreter)
+            endTransaction(transaction)
         }
+    }
+
+    private suspend fun beginTransaction(source: Store): Transaction {
+        val transaction = Transaction(logsChannel, source.snapshot())
+        Timber.i("beginTransaction ${transaction.id} stack ${transactionStack.size} on ${Thread.currentThread()}")
+        val element = coroutineContext.transactionElement ?: error("Should be available here")
+        element.transaction = transaction
+        return transaction
+    }
+
+    private fun endTransaction(transaction: Transaction) {
+        Timber.i("endTransaction ${transaction.id} stack ${transactionStack.size} on ${Thread.currentThread()}")
+        if (transaction.successful) transaction.snapshot.commit()
     }
 }
