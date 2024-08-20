@@ -2,8 +2,8 @@ package io.github.imort.database.store
 
 import timber.log.Timber
 
-class Snapshot(private val store: Store) : Store {
-    private val changes = mutableMapOf<String, Change>()
+class Snapshot<T>(private val store: Store<T>) : Store<T> {
+    private val changes = mutableMapOf<String, Change<T>>()
 
     override fun keys(): Set<String> {
         return store.keys() + changes.keys
@@ -17,13 +17,13 @@ class Snapshot(private val store: Store) : Store {
         return keys().map { get(it) }.count { it == value }
     }
 
-    override fun get(key: String): String? {
+    override fun get(key: String): T? {
         Timber.v("get $key on ${Thread.currentThread()}")
         val change = changes[key] ?: return store.get(key)
         return change.value
     }
 
-    override fun set(key: String, value: String?) {
+    override fun set(key: String, value: T?) {
         Timber.v("set $key:$value on ${Thread.currentThread()}")
         changes[key] = Change(value, store.version(key) ?: 0)
     }
@@ -34,5 +34,5 @@ class Snapshot(private val store: Store) : Store {
     }
 
     // null value marks deletion
-    data class Change(val value: String?, val version: Int)
+    data class Change<T>(val value: T?, val version: Int)
 }

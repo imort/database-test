@@ -19,6 +19,6 @@ internal object DatabaseModule {
     @DisableInstallInCheck
     interface Bindings {
         @Binds
-        fun store(impl: StoreImpl): Store
+        fun store(impl: StoreImpl): Store<String>
     }
 }

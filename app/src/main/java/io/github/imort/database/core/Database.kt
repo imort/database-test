@@ -29,7 +29,7 @@ import kotlin.coroutines.coroutineContext
 @Singleton
 class Database @Inject constructor(
     dispatchersFactory: DispatchersFactory,
-    private val store: Store,
+    private val store: Store<String>,
 ) {
 
     private val logsChannel = Channel<String>()
@@ -53,7 +53,7 @@ class Database @Inject constructor(
         else -> transactionContext
     }
 
-    private suspend fun <R> withTransactionContext(block: suspend (Store) -> R) =
+    private suspend fun <R> withTransactionContext(block: suspend (Store<String>) -> R) =
         withContext(coroutineContext.transactional()) {
             val source = coroutineContext.transactionElement?.transaction?.snapshot ?: store
             block(source)
@@ -94,14 +94,13 @@ class Database @Inject constructor(
                         }
                     }
                 } else {
+                    if (command is Commit || command is Rollback) {
+                        check(transaction == transactionStack.peek()) { "Ending transaction started by withTransaction" }
+                    }
                     val result = transaction.scope.perform(command)
                     if (command is Commit || command is Rollback) {
-                        if (transaction == transactionStack.peek()) {
-                            endTransaction(transaction)
-                            transactionStack.pop()
-                        } else {
-                            error("Ending transaction started by withTransaction")
-                        }
+                        endTransaction(transaction)
+                        transactionStack.pop()
                     }
                     result
                 }
@@ -109,7 +108,7 @@ class Database @Inject constructor(
         }
     }
 
-    private suspend fun <R> executeInNewTransaction(source: Store, block: suspend TransactionScope.() -> R): R {
+    private suspend fun <R> executeInNewTransaction(source: Store<String>, block: suspend TransactionScope.() -> R): R {
         val transaction = beginTransaction(source)
         try {
             return withContext(parallelContext) {
@@ -120,7 +119,7 @@ class Database @Inject constructor(
         }
     }
 
-    private suspend fun beginTransaction(source: Store): Transaction {
+    private suspend fun beginTransaction(source: Store<String>): Transaction {
         val transaction = Transaction(logsChannel, source.snapshot())
         Timber.i("beginTransaction ${transaction.id} stack ${transactionStack.size} on ${Thread.currentThread()}")
         val element = coroutineContext.transactionElement ?: error("Should be available here")

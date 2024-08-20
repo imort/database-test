@@ -13,7 +13,7 @@ import java.util.UUID
 
 class Transaction(
     val logger: Channel<String>,
-    val snapshot: Snapshot,
+    val snapshot: Snapshot<String>,
 ) {
     val id = UUID.randomUUID().toString()
     var successful: Boolean = false

@@ -5,15 +5,15 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
-interface Store {
+interface Store<T> {
     fun keys(): Set<String>
     fun version(key: String): Int?
-    fun get(key: String): String?
-    fun set(key: String, value: String?)
+    fun get(key: String): T?
+    fun set(key: String, value: T?)
 
-    fun snapshot() = Snapshot(this)
+    fun snapshot(): Snapshot<T> = Snapshot(this)
 
-    fun merge(changes: Map<String, Snapshot.Change>) {
+    fun merge(changes: Map<String, Snapshot.Change<T>>) {
         changes.keys.forEach { key ->
             val targetVersion = changes[key]?.version ?: error("Missing changes for $key")
             val sourceVersion = version(key) ?: return@forEach
@@ -24,12 +24,12 @@ interface Store {
         }
     }
 
-    data class StoreValue(val value: String, val version: Int)
+    data class StoreValue<T>(val value: T, val version: Int)
 }
 
 @Singleton
-class StoreImpl @Inject constructor() : Store {
-    private val data = mutableMapOf<String, StoreValue>()
+class StoreImpl @Inject constructor() : Store<String> {
+    private val data = mutableMapOf<String, StoreValue<String>>()
 
     override fun keys(): Set<String> = data.keys
 
