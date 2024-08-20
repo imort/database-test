@@ -385,15 +385,15 @@ class DatabaseTest {
 
         val mutex1 = Mutex(locked = true)
         val job1 = backgroundScope.launch {
-            db.withTransaction {
-                set("foo", "456")
-                mutex1.withLock {
-                    commit()
+            shouldThrow<IllegalStateException> {
+                db.withTransaction {
+                    set("foo", "456")
+                    mutex1.withLock {
+                        commit()
+                    }
                 }
             }
         }
-        mutex1.unlock()
-        job1.join()
 
         val mutex2 = Mutex(locked = true)
         val job2 = backgroundScope.launch {
@@ -406,6 +406,8 @@ class DatabaseTest {
         }
         mutex2.unlock()
         job2.join()
+        mutex1.unlock()
+        job1.join()
 
         db.execute(Get("foo")) shouldBe "789"
     }
